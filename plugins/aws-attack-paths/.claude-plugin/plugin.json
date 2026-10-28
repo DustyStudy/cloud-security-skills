@@ -1,0 +1,12 @@
+{
+  "name": "aws-attack-paths",
+  "version": "0.1.0",
+  "description": "Maps AWS attack techniques to GuardDuty detections, SCP/RCP and IAM preventive controls, response steps and NIST 800-53 Rev5 IDs.",
+  "author": {
+    "name": "Dustin Arrington",
+    "url": "https://github.com/DustyStudy"
+  },
+  "repository": "https://github.com/DustyStudy/cloud-security-skills",
+  "license": "MIT",
+  "keywords": ["aws", "security", "detection", "guardduty", "scp", "mitre-attack", "nist-800-53"]
+}

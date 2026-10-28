@@ -1,0 +1,40 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "cloud-security-skills",
+  "owner": {
+    "name": "Dustin Arrington",
+    "url": "https://github.com/DustyStudy"
+  },
+  "metadata": {
+    "description": "Agent Skills for AWS cloud security and FedRAMP: attack paths mapped to detections, preventive controls and response, and FedRAMP 2026 compliance.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "aws-attack-paths",
+      "source": "./plugins/aws-attack-paths",
+      "description": "Maps AWS attack techniques to GuardDuty detections, SCP/RCP and IAM preventive controls, response steps and NIST 800-53 Rev5 IDs.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Dustin Arrington"
+      },
+      "license": "MIT",
+      "category": "security"
+    },
+    {
+      "name": "fedramp-cloud-compliance",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/DustyStudy/fedramp-cloud-compliance-skill.git"
+      },
+      "description": "FedRAMP 2026 (20x and Rev5) compliance for AWS, Azure and Google Cloud: control and KSI mapping, Terraform review, documentation.",
+      "author": {
+        "name": "Dustin Arrington"
+      },
+      "homepage": "https://github.com/DustyStudy/fedramp-cloud-compliance-skill",
+      "license": "MIT",
+      "category": "security",
+      "strict": false
+    }
+  ]
+}
