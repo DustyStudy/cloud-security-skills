@@ -2,6 +2,7 @@
 
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,8 @@ def test_remote_plugins_point_at_github_repos():
     for entry in remote:
         assert entry["source"]["source"] == "url"
         assert re.fullmatch(r"https://github\.com/DustyStudy/[\w.-]+\.git", entry["source"]["url"])
+        # Pin to a commit so installs don't follow the remote's default branch.
+        assert re.fullmatch(r"[0-9a-f]{40}", entry["source"].get("sha", "")), entry["name"]
         # Its repo has no plugin.json, so the marketplace entry must define the plugin.
         assert entry["strict"] is False
 
@@ -69,3 +72,17 @@ def test_every_technique_has_every_field():
         assert nist, title
         for control in nist.group(1).rstrip(".").split(", "):
             assert re.fullmatch(r"[A-Z]{2}-\d+(\(\d+\))?", control), f"{title}: bad NIST ID {control}"
+
+
+# Skill files land in an agent's context, so block text a reviewer can't see in a diff.
+@pytest.mark.parametrize(
+    "path",
+    sorted(p for p in ROOT.glob("plugins/**/*") if p.is_file()) + [ROOT / ".claude-plugin" / "marketplace.json"],
+    ids=lambda p: p.relative_to(ROOT).as_posix(),
+)
+def test_no_hidden_content(path):
+    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        assert "<!--" not in line, f"{path.name}:{n}: HTML comment"
+        for ch in line:
+            hidden = unicodedata.category(ch) == "Cf" or 0xE0000 <= ord(ch) <= 0xE007F
+            assert not hidden, f"{path.name}:{n}: hidden char U+{ord(ch):04X}"
