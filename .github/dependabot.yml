@@ -10,3 +10,13 @@ updates:
       github-actions:
         patterns: ["*"]
     open-pull-requests-limit: 5
+  - package-ecosystem: "pip"
+    cooldown:
+      default-days: 7
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      pip:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
