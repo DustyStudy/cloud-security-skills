@@ -25,7 +25,9 @@
       "name": "fedramp-cloud-compliance",
       "source": {
         "source": "url",
-        "url": "https://github.com/DustyStudy/fedramp-cloud-compliance-skill.git"
+        "url": "https://github.com/DustyStudy/fedramp-cloud-compliance-skill.git",
+        "ref": "main",
+        "sha": "f8eb2a68a86311177e0bed61dc19643c15c3ac7b"
       },
       "description": "FedRAMP 2026 (20x and Rev5) compliance for AWS, Azure and Google Cloud: control and KSI mapping, Terraform review, documentation.",
       "author": {

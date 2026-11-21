@@ -25,12 +25,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Lint (ruff)
+      # Hash-pinned, including transitive deps (regen command in the requirements-dev.txt header).
+      - name: Install dev tools
         run: |
-          pip install --quiet "ruff==0.16.9"
-          ruff check .
+          python3 -m venv "$RUNNER_TEMP/dev"
+          "$RUNNER_TEMP/dev/bin/pip" install --quiet --require-hashes --only-binary=:all: -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: '"$RUNNER_TEMP/dev/bin/ruff" check .'
 
       - name: Structure tests (manifests, frontmatter, links, catalog fields)
-        run: |
-          pip install --quiet "pytest==9.1.1"
-          python3 -m pytest tests -q
+        run: '"$RUNNER_TEMP/dev/bin/python" -m pytest tests -q'
