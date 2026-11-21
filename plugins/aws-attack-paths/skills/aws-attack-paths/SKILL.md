@@ -27,6 +27,8 @@ each control. The audience runs multi-account AWS Organizations, often under Fed
    deny besides the attacker, exempt break-glass and security-pipeline roles, and default
    anything that could deny existing workloads to off. SCPs don't apply to the management
    account or to service-linked roles, and an SCP document is limited to 5,120 characters.
+   RCPs have the same exemptions (resources in the management account, service-linked
+   roles) and don't apply to AWS managed KMS keys.
 5. **Never deploy.** Give Terraform and `terraform plan` commands for the user to run and
    review; never apply, and never run mutating AWS CLI calls.
 6. **Say what isn't covered.** Every answer ends with the gaps: the variants the controls
