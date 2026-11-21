@@ -259,7 +259,8 @@ Hijacking.
   SageMaker hosts models, `sagemaker:InvokeEndpoint*` by endpoint ARN; Bedrock API keys
   controlled by denying `bedrock:CallWithBearerToken` and `bedrock-mantle:CallWithBearerToken`
   (all keys, or only `LONG_TERM` with `bedrock:BearerTokenType` and
-  `bedrock-mantle:BearerTokenType`) and `iam:CreateServiceSpecificCredential` where
+  `bedrock-mantle:BearerTokenType`, one Deny statement per action and its own key, since
+  both keys in one condition block are ANDed and the deny never matches) and `iam:CreateServiceSpecificCredential` where
   `iam:ServiceSpecificCredentialServiceName` = `bedrock.amazonaws.com` (without that
   condition it also blocks CodeCommit and Keyspaces credentials); SCP
   denying both `bedrock:DeleteModelInvocationLoggingConfiguration` and
@@ -397,9 +398,12 @@ ATT&CK [T1537](https://attack.mitre.org/techniques/T1537/) Transfer Data to Clou
   since an omitted `allowExternalPrincipals` defaults to true, and `Bool` on
   `UpdateResourceShare`) and denying `AssociateResourceShare` on shares that already allow
   them (`ram:AllowsExternalPrincipals`), plus a review of shares created before the SCP;
-  SCP denying `ec2:ModifySnapshotAttribute` when `ec2:Add/userId` isn't an approved account
-  (`StringNotEquals`, plus `Null` = `false` so removals still work; test a request naming
-  several accounts, since the key is documented as single-valued); AMIs have no such key;
+  unverified, test before relying on it: an SCP denying `ec2:ModifySnapshotAttribute` when
+  `ec2:Add/userId` isn't an approved account (`StringNotEquals`, plus `Null` = `false` so
+  removals still work). The key is documented as single-valued but one call can add many
+  accounts, so test approved and unapproved IDs together in both orders and removal-only
+  requests; don't switch to `ForAnyValue`/`ForAllValues` on a single-valued key. AMIs have
+  no such key;
   EBS snapshot and AMI block public access (stops public sharing only, not sharing to a
   named outside account); RCP with `aws:PrincipalOrgID` on S3 and KMS (RCPs don't cover
   the `ec2:` and `rds:` snapshot and AMI actions, or AWS managed KMS keys).
@@ -435,5 +439,5 @@ Compromise Software Supply Chain.
   IMDS hop-limit statement.
 - **Gaps:** pinning stops silent upgrades, not a compromised version you chose to pin.
   GuardDuty's credential exfiltration findings cover EC2, ECS task and Lambda credentials,
-  not OIDC role sessions from GitHub-hosted runners, so anomaly detection on pipeline roles
-  is custom.
+  not OIDC role sessions from GitHub-hosted runners. GuardDuty's `AnomalousBehavior`
+  findings still cover assumed roles; add pipeline-specific CloudTrail detections on top.
