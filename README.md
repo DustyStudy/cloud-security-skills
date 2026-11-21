@@ -44,7 +44,7 @@ The technique catalog links tested code in
 ## Development
 
 ```bash
-pip install ruff==0.16.9 pytest==9.1.1
+pip install --require-hashes -r requirements-dev.txt
 ruff check .
 python -m pytest tests -q
 claude plugin validate .
