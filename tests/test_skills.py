@@ -36,7 +36,9 @@ def test_remote_plugins_point_at_github_repos():
     for entry in remote:
         assert entry["source"]["source"] == "url"
         assert re.fullmatch(r"https://github\.com/DustyStudy/[\w.-]+\.git", entry["source"]["url"])
-        # Pin to a commit so installs don't follow the remote's default branch.
+        # Pin to a commit so installs don't follow the remote's default branch; the docs
+        # only promise the sha is checked out when ref is set too.
+        assert entry["source"].get("ref"), entry["name"]
         assert re.fullmatch(r"[0-9a-f]{40}", entry["source"].get("sha", "")), entry["name"]
         # Its repo has no plugin.json, so the marketplace entry must define the plugin.
         assert entry["strict"] is False
