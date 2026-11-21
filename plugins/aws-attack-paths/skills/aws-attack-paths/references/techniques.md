@@ -70,8 +70,8 @@ Credentials.
   be doing it).
 - **Prevent:** SCP denying those four actions except for break-glass, plus
   `iam:UpdateAccessKey`, `iam:UpdateServiceSpecificCredential` and
-  `iam:ResetServiceSpecificCredential` for IAM users themselves (`aws:PrincipalType` =
-  `User`), so a stolen credential can't re-enable a deactivated one (this also stops users
+  `iam:ResetServiceSpecificCredential` for IAM users themselves (`aws:PrincipalType` in
+  [`User`, `FederatedUser`]; `GetFederationToken` console sessions can call IAM), so a stolen credential can't re-enable a deactivated one (this also stops users
   managing their own keys).
 - **Respond:** contain as in entry 1 (deactivate keys and service-specific credentials, deny
   sessions issued before now and the calls that re-enable credentials). Export the user's
@@ -170,7 +170,8 @@ Chain.
 - **Prevent:** require `aud` = `sts.amazonaws.com` and pin the repository by its immutable
   IDs, `token.actions.githubusercontent.com:repository_id` and `repository_owner_id`
   (names can be renamed and re-registered), plus `sub` or `ref`/`environment` for the
-  branch or environment; add `job_workflow_ref` to admit one workflow file. Since early
+  branch or environment; add `job_workflow_ref` to admit one workflow file (it is that file's own
+  path, or the reusable workflow's when the job calls one; check a sample token). Since early
   2026 STS validates GitHub's `actor`, `actor_id`, `job_workflow_ref`, `repository`,
   `repository_id`, `repository_owner_id`, `workflow`, `ref`, `environment` and
   `enterprise_id` claims in trust policies and RCPs, in commercial Regions. GovCloud
@@ -180,9 +181,11 @@ Chain.
   Trust named roles rather than whole accounts, require `sts:ExternalId` for third
   parties, and add `aws:SourceAccount`/`aws:SourceArn` to service-principal trusts. RCP
   limiting `sts:AssumeRole` to principals in the organization plus named partners, and
-  `sts:AssumeRoleWithWebIdentity` from GitHub to your `repository_owner_id` (scope it with
-  `...IfExists` or a `Null` check so other OIDC providers such as EKS aren't denied; test
-  first). RCPs never cover roles in the management account or service-linked roles.
+  `sts:AssumeRoleWithWebIdentity` from GitHub to your `repository_owner_id`: `StringNotEquals` on that key
+  plus `Null` = `false` on it in the same statement, so the deny applies only when the
+  GitHub claim is present. Don't use `StringNotEqualsIfExists`: in a Deny it matches when
+  the key is missing and would deny EKS IRSA and every other OIDC provider. Test an allowed
+  repo, an outside repo and an IRSA role first. RCPs never cover roles in the management account or service-linked roles.
 - **Respond:** tighten the trust policy, revoke the role's sessions, and review what the
   role did since the trust was loosened.
 - **NIST:** AC-3, AC-17, IA-2, IA-8, SA-9, SR-3.
