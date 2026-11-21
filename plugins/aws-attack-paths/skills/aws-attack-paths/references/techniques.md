@@ -1,6 +1,6 @@
 # AWS technique catalog
 
-Checked on 2026-10-28: GuardDuty finding types, Security Hub control IDs, RCP service
+Checked on 2026-11-20: GuardDuty finding types, Security Hub control IDs, RCP service
 coverage and S3 SSE-C behavior against AWS documentation; IAM action and condition key
 names against the reference repositories' policies, which pass IAM Access Analyzer policy
 validation. All of these change; confirm each one on the linked AWS page before deploying.
@@ -25,7 +25,8 @@ Accounts.
   file). The attacker calls `sts:GetCallerIdentity`, enumerates (`iam:List*`,
   `ses:GetSendQuota`, `bedrock:ListFoundationModels`), then abuses whatever the user can
   reach.
-- **Detect:** GuardDuty `UnauthorizedAccess:IAMUser/MaliciousIPCaller`,
+- **Detect:** GuardDuty `CredentialAccess:IAMUser/CompromisedCredentials` (Amazon threat
+  intelligence flagged the key), `UnauthorizedAccess:IAMUser/MaliciousIPCaller`,
   `Discovery:IAMUser/AnomalousBehavior`, `InitialAccess:IAMUser/AnomalousBehavior`, and the
   Extended Threat Detection attack sequence `AttackSequence:IAM/CompromisedCredentials`;
   Security Hub IAM.3 (keys rotated every 90 days or less) and IAM.22 (credentials unused for
@@ -35,11 +36,16 @@ Accounts.
 - **Prevent:** no long-term keys. SCP denying `iam:CreateUser`, `iam:CreateAccessKey` and
   `iam:CreateLoginProfile` outside break-glass; workloads use roles, people use IAM
   Identity Center. Where IAM users must stay, deny high-abuse services to them with
-  `aws:PrincipalType` = `User` (SES, Bedrock).
+  `aws:PrincipalType` in [`User`, `FederatedUser`] (SES, Bedrock): a `GetFederationToken`
+  session made with the key has type `FederatedUser` and slips past a `User`-only match (or
+  deny `sts:GetFederationToken` outright).
 - **Respond:** deactivate (don't delete) every access key and service-specific credential
   on the user, and attach an inline deny on `aws:TokenIssueTime` before now to the user too:
   deactivating a key doesn't end temporary credentials already issued from it
-  (`GetSessionToken`, `GetFederationToken`). Revoke sessions on any role the key assumed.
+  (`GetSessionToken`, `GetFederationToken`). The same inline policy denies
+  `iam:UpdateAccessKey`, `iam:UpdateServiceSpecificCredential` and
+  `iam:ResetServiceSpecificCredential`, so a credential you missed can't re-enable or re-key
+  the ones you deactivated. Revoke sessions on any role the key assumed.
   Check `iam:ListAccessKeys` and `iam:ListServiceSpecificCredentials` for credentials the
   attacker added, then review CloudTrail for the key's activity.
 - **NIST:** IA-2, IA-5, AC-2, AC-2(3), AC-6, SI-4, IR-4.
@@ -62,11 +68,15 @@ Credentials.
   `CreateAccessKey`, `CreateLoginProfile`, `UpdateLoginProfile`,
   `CreateServiceSpecificCredential` from an IAM user (alert on any, since people shouldn't
   be doing it).
-- **Prevent:** SCP denying those four actions except for break-glass.
+- **Prevent:** SCP denying those four actions except for break-glass, plus
+  `iam:UpdateAccessKey`, `iam:UpdateServiceSpecificCredential` and
+  `iam:ResetServiceSpecificCredential` for IAM users themselves (`aws:PrincipalType` =
+  `User`), so a stolen credential can't re-enable a deactivated one (this also stops users
+  managing their own keys).
 - **Respond:** contain as in entry 1 (deactivate keys and service-specific credentials, deny
-  sessions issued before now). Export the user's policies, group memberships, credential
-  report and login profile as evidence before removing the login profile; delete the user
-  only after the investigation is closed.
+  sessions issued before now and the calls that re-enable credentials). Export the user's
+  policies, group memberships, credential report and login profile as evidence before
+  removing the login profile; delete the user only after the investigation is closed.
 - **NIST:** AC-2, AC-2(4), IA-5, AU-6, IR-4.
 - **Example:** aws-org-guardrails `core` bundle (service-specific credentials statement,
   off by default); aws-remediation-orchestrator `DisableCompromisedCredentials`.
@@ -113,24 +123,33 @@ API.
 - **Detect:** GuardDuty
   `UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration.OutsideAWS` and
   `.InsideAWS` (credentials used from another AWS account); Security Hub EC2.8 (IMDSv2
-  required).
+  required on instances), EC2.170 (launch templates) and AutoScaling.3 (launch
+  configurations).
 - **Prevent:** require IMDSv2 at launch (`ec2:MetadataHttpTokens` = `required`), deny
   changing metadata options afterwards, and set the hop limit to 1 where containers on
   bridge networks shouldn't reach the instance role
-  (`ec2:MetadataHttpPutResponseHopLimit`). Network perimeter conditions
+  (`ec2:MetadataHttpPutResponseHopLimit`). Because SCPs miss Auto Scaling launches (see
+  Gaps), also set the account IMDS defaults per Region
+  (`ec2:ModifyInstanceMetadataDefaults`, `--http-tokens required`, plus account-level IMDSv2
+  enforcement) or the same settings in an EC2 declarative policy, and require `autoscaling:LaunchTemplateVersionSpecified` so groups
+  can't follow `$Latest`/`$Default`. Network perimeter conditions
   (`aws:SourceVpc`, `aws:SourceVpce`, `aws:VpcSourceIp`) on sensitive resources make
   stolen credentials useless off the network.
 - **Respond:** revoke the role's active sessions (an inline deny on
   `aws:TokenIssueTime` before now, which is what the console's "Revoke active sessions"
-  adds as `AWSRevokeOlderSessions`), then isolate the instance after snapshotting its
-  volumes.
+  adds as `AWSRevokeOlderSessions`). That doesn't stop a running instance pulling fresh
+  credentials from IMDS, so also disassociate or replace its instance profile
+  (`ec2:DisassociateIamInstanceProfile`, `ReplaceIamInstanceProfileAssociation`), then
+  isolate the instance after snapshotting its volumes.
 - **NIST:** AC-3, AC-4, SC-7, SI-4, IR-4.
 - **Example:** aws-org-guardrails `data-and-compute` bundle (IMDSv2, hop limit, metadata
   options); aws-remediation-orchestrator `RevokeRoleSessions` and
   `IsolateCompromisedInstance`.
-- **Gaps:** IMDSv2 does not stop code running on the host itself; the hop-limit statement
-  doesn't cover launches by Auto Scaling or EKS managed node groups; ECS task credentials
-  come from a different endpoint.
+- **Gaps:** IMDSv2 does not stop code running on the host itself. Neither the IMDSv2 nor the
+  hop-limit SCP statement binds instances that Auto Scaling (including EKS managed node
+  groups) launches after the group is created or updated: those launches use its
+  service-linked role, which SCPs don't bind. Account defaults don't change existing
+  instances. ECS task credentials come from a different endpoint.
 
 ## 5. Over-trusting OIDC and cross-account role trust
 
@@ -143,25 +162,34 @@ Chain.
   assume it; or a role trusts a whole outside account (`:root`) instead of a named role, or
   trusts a third party without `sts:ExternalId`; or a role trusted by an AWS service lacks
   `aws:SourceAccount` or `aws:SourceArn` (confused deputy).
-- **Detect:** CloudTrail `AssumeRoleWithWebIdentity` from an unexpected repository or
-  workflow (the claims are in the event); IAM Access Analyzer external access findings;
-  a scheduled audit of trust policies.
-- **Prevent:** pin `token.actions.githubusercontent.com:sub` to one repository and
-  environment or branch, and require `aud` = `sts.amazonaws.com`. IAM supports only the
-  `amr`, `aud`, `email`, `oaud` and `sub` keys for GitHub, so a condition on another claim
-  such as `job_workflow_ref` never matches and blocks the role entirely. To admit only one
-  workflow file, customize the repository's OIDC subject template on GitHub to include
-  `job_workflow_ref`, then match the new `sub` value. Trust named roles rather than whole
-  accounts, require `sts:ExternalId` for third parties, and add
-  `aws:SourceAccount`/`aws:SourceArn` to service-principal trusts; RCP limiting
-  `sts:AssumeRole` to principals in the organization plus named partners.
+- **Detect:** CloudTrail `AssumeRoleWithWebIdentity` from an unexpected repository (the
+  event's `userIdentity` carries the provider, `aud` and `sub`; don't expect
+  `job_workflow_ref`, `workflow` or `actor` in it, so an unexpected workflow on an allowed
+  branch can't be spotted from CloudTrail alone; check a sample event); IAM Access
+  Analyzer external access findings; a scheduled audit of trust policies.
+- **Prevent:** require `aud` = `sts.amazonaws.com` and pin the repository by its immutable
+  IDs, `token.actions.githubusercontent.com:repository_id` and `repository_owner_id`
+  (names can be renamed and re-registered), plus `sub` or `ref`/`environment` for the
+  branch or environment; add `job_workflow_ref` to admit one workflow file. Since early
+  2026 STS validates GitHub's `actor`, `actor_id`, `job_workflow_ref`, `repository`,
+  `repository_id`, `repository_owner_id`, `workflow`, `ref`, `environment` and
+  `enterprise_id` claims in trust policies and RCPs, in commercial Regions. GovCloud
+  support is unconfirmed: test there first, since a condition on an unsupported key never
+  matches and locks the role out, and fall back to customizing the repository's OIDC
+  subject template on GitHub to include `job_workflow_ref`, then matching the new `sub`.
+  Trust named roles rather than whole accounts, require `sts:ExternalId` for third
+  parties, and add `aws:SourceAccount`/`aws:SourceArn` to service-principal trusts. RCP
+  limiting `sts:AssumeRole` to principals in the organization plus named partners, and
+  `sts:AssumeRoleWithWebIdentity` from GitHub to your `repository_owner_id` (scope it with
+  `...IfExists` or a `Null` check so other OIDC providers such as EKS aren't denied; test
+  first). RCPs never cover roles in the management account or service-linked roles.
 - **Respond:** tighten the trust policy, revoke the role's sessions, and review what the
   role did since the trust was loosened.
 - **NIST:** AC-3, AC-17, IA-2, IA-8, SA-9, SR-3.
 - **Example:** fedramp-terraform-library `trust-policy-auditor` (missing or wildcard `sub`
   and `aud`, cross-account and `"*"` trust).
-- **Gaps:** a trust pinned to `main` still admits every workflow file merged to `main`;
-  branch protection and review are part of the control.
+- **Gaps:** a trust pinned to `main` without `job_workflow_ref` still admits every
+  workflow file merged to `main`; branch protection and review are part of the control.
 
 ## 6. LLMjacking: stolen credentials used to run AI models
 
@@ -169,22 +197,33 @@ ATT&CK [T1496.004](https://attack.mitre.org/techniques/T1496/004/) Cloud Service
 Hijacking.
 
 - **Path:** stolen credentials call `bedrock:ListFoundationModels` and
-  `bedrock:GetFoundationModelAvailability`, request model access, then invoke models at the
-  victim's cost (`bedrock:InvokeModel`, which also authorizes the Converse API, and
+  `bedrock:GetFoundationModelAvailability`, then invoke models at the victim's cost
+  (`bedrock:InvokeModel`, which also authorizes the Converse API, and
   `bedrock:InvokeModelWithResponseStream`), often after
   `bedrock:GetModelInvocationLoggingConfiguration` to check whether prompts are logged, or
-  `bedrock:DeleteModelInvocationLoggingConfiguration` to stop it.
+  `bedrock:DeleteModelInvocationLoggingConfiguration` to stop it. Since October 2025
+  serverless models are enabled by default (the model access page and
+  `PutFoundationModelEntitlement` are retired); Anthropic models need a one-time use-case
+  form (`bedrock:PutUseCaseForModelAccess`) and Marketplace-offered models an
+  `aws-marketplace:Subscribe` on first call, which the attacker can make.
 - **Detect:** GuardDuty `DefenseEvasion:IAMUser/BedrockLoggingDisabled`; with GuardDuty AI
-  Protection, `Impact:IAMUser/AnomalousModelInvocation` and `Impact:IAMUser/CostHarvesting`;
-  CloudTrail Bedrock calls from IAM users or unexpected roles; a Cost Anomaly Detection
-  monitor on Bedrock; model invocation logging turned on and protected.
+  Protection, `Impact:IAMUser/AnomalousModelInvocation` (default severity Low, so route it
+  by type, not severity) and `Impact:IAMUser/CostHarvesting`; CloudTrail Bedrock calls from
+  IAM users or unexpected roles (`InvokeModel`, `InvokeModelWithResponseStream`, `Converse`
+  and `ConverseStream` are management events, but `StartAsyncInvoke` and
+  `InvokeModelWithBidirectionalStream` are data events that must be turned on); a Cost
+  Anomaly Detection monitor on Bedrock; model invocation logging turned on and protected.
 - **Prevent:** SCP denying Bedrock to IAM users; an allowlist of foundation models; SCP
   denying both `bedrock:DeleteModelInvocationLoggingConfiguration` and
   `bedrock:PutModelInvocationLoggingConfiguration` (which can turn off payload logging or
   redirect it) to everyone but the logging administrator, plus guardrail deletion; Bedrock
-  only from roles that need it.
-- **Respond:** deactivate the credential (including Bedrock API keys), check model access
-  agreements made during the incident, and review invocation logs.
+  only from roles that need it. Invocation logging is set per Region, so pair it with a
+  Region-restriction SCP or turn it on in every Region Bedrock can be called in.
+- **Respond:** deactivate the credential. Long-term Bedrock API keys can be set inactive
+  (`iam:UpdateServiceSpecificCredential`); short-term keys are presigned and can't be
+  revoked one by one, so revoke the issuing identity's sessions. Check CloudTrail for
+  `PutUseCaseForModelAccess`, `CreateFoundationModelAgreement` and
+  `aws-marketplace:Subscribe` during the incident, and review invocation logs.
 - **NIST:** AC-3, AC-6, AU-2, AU-12, SI-4.
 - **Example:** aws-org-guardrails `ai-ml-guardrails` (Bedrock to IAM users, model
   allowlist, invocation logging, guardrail deletion), `bedrock-cost-guardrails` and
@@ -224,11 +263,17 @@ ATT&CK [T1562.008](https://attack.mitre.org/techniques/T1562/008/) Disable or Mo
 Logs.
 
 - **Path:** `cloudtrail:StopLogging`, `DeleteTrail`, `UpdateTrail` or `PutEventSelectors`;
-  `guardduty:DeleteDetector`, `UpdateDetector` or `CreateFilter` (an auto-archive
-  suppression rule); `config:StopConfigurationRecorder`; `securityhub:DisableSecurityHub`.
+  `guardduty:DeleteDetector`, `UpdateDetector`, `CreateFilter` (an auto-archive
+  suppression rule), `CreateIPSet` or `UpdateIPSet` (GuardDuty raises no findings for
+  addresses on a trusted IP list) or `DisassociateFromAdministratorAccount`;
+  `config:StopConfigurationRecorder`, `DeleteConfigurationRecorder` or
+  `DeleteDeliveryChannel`; `securityhub:DisableSecurityHub`, `BatchDisableStandards` or
+  `CreateAutomationRule` (to suppress findings); `ec2:DeleteFlowLogs`.
 - **Detect:** GuardDuty `Stealth:IAMUser/CloudTrailLoggingDisabled` and
   `DefenseEvasion:IAMUser/AnomalousBehavior`; Security Hub CloudTrail.1 and GuardDuty.1;
-  CIS metric filters for CloudTrail and Config changes.
+  CIS metric filters for CloudTrail and Config changes. GuardDuty has no dedicated finding
+  for GuardDuty, Security Hub or Config being disabled, so add a custom EventBridge rule on
+  the calls above.
 - **Prevent:** an organization trail (members can't stop it); SCP denying those actions
   outside the security pipeline; delegated administrator for GuardDuty and Security Hub in a
   security account.
@@ -237,12 +282,14 @@ Logs.
 - **NIST:** AU-6, AU-9, AU-12, SI-4, CM-5.
 - **Example:** aws-org-guardrails `security-services` bundle; fedramp-terraform-library
   `org-cloudtrail`, `guardduty-org`, `security-hub-org` and `logging-monitoring`.
-- **Gaps:** an organization trail can still be changed from the management account.
+- **Gaps:** an organization trail can still be changed from the management account and
+  from the CloudTrail delegated administrator account.
 
 ## 9. S3 ransomware and destruction
 
 ATT&CK [T1486](https://attack.mitre.org/techniques/T1486/) Data Encrypted for Impact and
-[T1485](https://attack.mitre.org/techniques/T1485/) Data Destruction.
+[T1485](https://attack.mitre.org/techniques/T1485/) Data Destruction, including
+[T1485.001](https://attack.mitre.org/techniques/T1485/001/) Lifecycle-Triggered Deletion.
 
 - **Path:** stolen credentials rewrite objects (`PutObject`, `CopyObject`) using
   server-side encryption with a customer-provided key (SSE-C) that only the attacker holds,
@@ -259,13 +306,19 @@ ATT&CK [T1486](https://attack.mitre.org/techniques/T1486/) Data Encrypted for Im
 - **Prevent:** keep SSE-C blocked on every bucket that doesn't need it, and deny
   `s3:PutEncryptionConfiguration` outside the pipeline that manages buckets; RCP denying S3
   access to principals outside the organization; versioning plus Object Lock or AWS Backup
-  vault lock for data that must survive; MFA delete where practical.
+  vault lock for data that must survive; MFA delete where practical. For the
+  attacker-account KMS key variant, test an SCP denying `kms:GenerateDataKey*`,
+  `kms:Encrypt` and `kms:ReEncrypt*` on keys whose `aws:ResourceOrgID` isn't your
+  organization; it also blocks partner and AWS-owned keys you rely on, so list exemptions
+  first.
 - **Respond:** revoke the credentials, remove attacker lifecycle rules, and restore from
   versions or backups; don't pay for keys you can't verify.
 - **NIST:** CP-9, CP-10, SC-28, AC-3, SI-4, IR-4.
 - **Example:** none in the reference repositories yet.
-- **Gaps:** S3 data events cost money and are often off; versioning alone doesn't help if
-  the attacker can delete versions.
+- **Gaps:** GuardDuty S3 Protection reads S3 data events itself, but your own CloudTrail or
+  SIEM detections on object writes (for example SSE-C `PutObject`) need trail data events,
+  which cost money and are often off; versioning alone doesn't help if the attacker can
+  delete versions.
 
 ## 10. Sharing data to an outside account
 
@@ -275,23 +328,28 @@ ATT&CK [T1537](https://attack.mitre.org/techniques/T1537/) Transfer Data to Clou
   `rds:ModifyDBSnapshotAttribute`, `ram:CreateResourceShare` or `AssociateResourceShare`
   with an outside principal, or a bucket policy granting an outside account.
 - **Detect:** CloudTrail for those events with an account outside the organization in the
-  request; IAM Access Analyzer external access findings; Security Hub EC2.1 and EC2.182
-  (public EBS snapshots).
+  request, plus `AssociateKmsKeyId` (an EBS associated KMS key that makes a snapshot
+  shareable) and `CopySnapshot` re-encrypting under a customer managed key; IAM Access
+  Analyzer external access findings; Security Hub EC2.1 and EC2.182 (public EBS
+  snapshots) and RDS.1 (public RDS snapshots).
 - **Prevent:** SCP denying new RAM shares that allow principals outside the organization
-  (`ram:RequestedAllowsExternalPrincipals` on `CreateResourceShare` and
+  (`ram:RequestedAllowsExternalPrincipals` with `BoolIfExists` on `CreateResourceShare`,
+  since an omitted `allowExternalPrincipals` defaults to true, and `Bool` on
   `UpdateResourceShare`) and denying `AssociateResourceShare` on shares that already allow
   them (`ram:AllowsExternalPrincipals`), plus a review of shares created before the SCP;
-  EBS snapshot and AMI block public access; RCP
-  with `aws:PrincipalOrgID` on S3 and KMS.
+  EBS snapshot and AMI block public access (stops public sharing only, not sharing to a
+  named outside account); RCP with `aws:PrincipalOrgID` on S3 and KMS (RCPs don't cover
+  the `ec2:` and `rds:` snapshot and AMI actions, or AWS managed KMS keys).
 - **Respond:** remove the share or permission and check whether the outside account copied
   the resource before removal (the copy is out of reach).
 - **NIST:** AC-3, AC-4, AC-21, SC-7, SI-4.
 - **Example:** aws-org-guardrails `data-and-compute` bundle (external RAM shares);
   fedramp-terraform-library `trust-policy-auditor` (RAM shares and open resource policies).
-- **Gaps:** an unencrypted snapshot is readable as soon as it is shared. Snapshots
-  encrypted with an AWS managed key can't be shared at all, and one encrypted with a
-  customer managed key is useless to the outside account unless the key policy or a grant
-  also lets it use the key, so watch KMS key policy and `CreateGrant` changes too.
+- **Gaps:** an unencrypted snapshot is readable as soon as it is shared. An encrypted one is
+  useless to the outside account until it can use a key: the encrypting customer managed
+  key (key policy or `CreateGrant`), an associated KMS key (which also makes snapshots
+  encrypted with an AWS managed key shareable), or a key the snapshot was re-encrypted
+  under with `CopySnapshot`. Watch all three.
 
 ## 11. Supply chain into the pipeline
 
