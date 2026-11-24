@@ -22,6 +22,10 @@ claude plugin install fedramp-cloud-compliance@cloud-security-skills
 Or, inside Claude Code: `/plugin marketplace add DustyStudy/cloud-security-skills`, then
 `/plugin` to pick the plugins.
 
+## Try it
+
+With `aws-attack-paths` installed, ask: “Map a GuardDuty finding about exposed IAM credentials to preventive controls and identify the gaps.” The skill describes the detection, relevant IAM or organization policies, incident response steps, and the evidence behind each recommendation.
+
 ## How the skills behave
 
 - **Defensive only.** Techniques are described at the level of API calls and conditions,
